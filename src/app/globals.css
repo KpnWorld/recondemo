@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --color-deep: #123b45;
+  --color-deep-700: #1a4c58;
+  --color-sea: #2f7778;
+  --color-sea-700: #276465;
+  --color-mint: #8edbd0;
+  --color-mint-100: #dff4f0;
+  --color-mint-50: #eef9f7;
+  --color-soft: #f3f7f6;
+  --color-gold: #e7b96c;
+  --color-gold-50: #fbf3e4;
+  --color-gold-800: #7a5414;
+  --color-ink: #25343a;
+  --color-ink-muted: #4f6168;
+  --color-line: #d5e2df;
+  --color-danger: #a1453b;
+  --color-danger-50: #fbeeec;
+  --color-ok: #2a6b4a;
+  --color-ok-50: #e9f5ee;
+
+  --radius-card: 1.25rem;
+  --shadow-card: 0 1px 2px rgb(18 59 69 / 0.04), 0 4px 16px rgb(18 59 69 / 0.06);
+  --shadow-lift: 0 2px 4px rgb(18 59 69 / 0.05), 0 12px 32px rgb(18 59 69 / 0.1);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-soft text-ink antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  h1, h2, h3, h4 {
+    @apply text-deep tracking-tight;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  a {
+    @apply text-sea underline decoration-1 underline-offset-4;
+  }
+  /* Large, clearly visible keyboard focus on every interactive element. */
+  :focus-visible {
+    outline: 3px solid var(--color-sea);
+    outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+  .on-dark :focus-visible {
+    outline-color: var(--color-mint);
+  }
+  ::selection {
+    background: var(--color-mint);
+    color: var(--color-deep);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -4rem;
+  z-index: 100;
+  @apply rounded-xl bg-deep px-4 py-3 font-semibold text-white no-underline shadow-lg;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
+.fade-in {
+  animation: fade-in 240ms ease-out both;
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.pulse-dot {
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.prose-policy h2 { @apply mt-8 mb-3 text-xl font-semibold; }
+.prose-policy p { @apply mb-4 leading-relaxed; }
+.prose-policy ul { @apply mb-4 list-disc pl-6 space-y-1; }

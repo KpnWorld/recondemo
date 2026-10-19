@@ -1,0 +1,616 @@
+// Call Recon data model.
+// SQLite is used for local/demo runs; switch `provider` to "postgresql" for production.
+// Enum-like fields are stored as strings and validated in src/lib/constants.ts so the
+// schema stays portable across SQLite and Postgres. Money is always integer cents.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  phoneVerified Boolean   @default(false)
+  role          String // CUSTOMER | PROVIDER | ADMIN
+  adminRole     String? // SUPER_ADMIN | DISPATCHER | SUPPORT | FINANCE (role = ADMIN only)
+  status        String    @default("ACTIVE") // ACTIVE | SUSPENDED | DELETED
+  isDemo        Boolean   @default(false)
+  // Consent captured explicitly, with timestamps.
+  locationConsentAt     DateTime?
+  emailNotifications    Boolean   @default(false)
+  smsNotifications      Boolean   @default(false)
+  pushNotifications     Boolean   @default(false)
+  termsAcceptedAt       DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  sessions          Session[]
+  passwordResets    PasswordResetToken[]
+  phoneCodes        PhoneVerificationCode[]
+  customerProfile   CustomerProfile?
+  providerProfile   ProviderProfile?
+  vehicles          Vehicle[]
+  savedLocations    SavedLocation[]
+  requests          ServiceRequest[]     @relation("CustomerRequests")
+  statusChanges     RequestStatusHistory[]
+  notifications     Notification[]
+  reviewsWritten    Review[]
+  supportTickets    SupportTicket[]      @relation("TicketAuthor")
+  assignedTickets   SupportTicket[]      @relation("TicketAssignee")
+  auditLogs         AuditLog[]
+  messages          Message[]
+  uploads           StoredFile[]
+
+  @@index([role, status])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model PhoneVerificationCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone     String
+  codeHash  String
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model CustomerProfile {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  paymentCustomerRef    String? // e.g. Stripe customer id, set only by server
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model ProviderProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName       String
+  businessPhone      String?
+  licenseNumber      String?
+  verificationStatus String    @default("PENDING") // PENDING | APPROVED | REJECTED | SUSPENDED
+  verificationNotes  String?
+  verifiedAt         DateTime?
+  verifiedById       String?
+  // Truck / equipment
+  truckType          String? // FLATBED | WHEEL_LIFT | SERVICE_VAN | MOTORCYCLE_TRAILER | HEAVY_DUTY
+  truckMake          String?
+  truckModel         String?
+  truckYear          Int?
+  truckPlate         String?
+  truckColor         String?
+  canWinch           Boolean   @default(false)
+  // Service coverage
+  baseAddress        String?
+  baseLat            Float?
+  baseLng            Float?
+  serviceRadiusMiles Float?
+  serviceZips        String    @default("") // comma separated ZIP codes
+  operatingHours     String    @default("{}") // JSON: { "mon": ["07:00","19:00"], ... } empty = always
+  // Availability: only true after provider confirms in-app.
+  isOnline           Boolean   @default(false)
+  onlineSince        DateTime?
+  lastLat            Float?
+  lastLng            Float?
+  lastLocationAt     DateTime?
+  // Reliability metrics, maintained by dispatch.
+  offersReceived     Int       @default(0)
+  offersAccepted     Int       @default(0)
+  jobsCompleted      Int       @default(0)
+  payoutAccountRef   String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  services    ProviderService[]
+  documents   ProviderDocument[]
+  assignments ProviderAssignment[]
+  offers      JobOffer[]
+  payouts     ProviderPayout[]
+
+  @@index([verificationStatus, isOnline])
+}
+
+model ProviderService {
+  id                String          @id @default(cuid())
+  providerId        String
+  provider          ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  serviceCategoryId String
+  serviceCategory   ServiceCategory @relation(fields: [serviceCategoryId], references: [id], onDelete: Cascade)
+  authorized        Boolean         @default(false) // set by an administrator during verification
+
+  @@unique([providerId, serviceCategoryId])
+}
+
+model ProviderDocument {
+  id           String          @id @default(cuid())
+  providerId   String
+  provider     ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  type         String // DRIVERS_LICENSE | INSURANCE | BUSINESS_LICENSE | VEHICLE_REGISTRATION | TOWING_PERMIT | OTHER
+  fileId       String
+  file         StoredFile      @relation(fields: [fileId], references: [id])
+  status       String          @default("PENDING") // PENDING | APPROVED | REJECTED
+  expiresOn    DateTime?
+  reviewNotes  String?
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime        @default(now())
+
+  @@index([providerId])
+}
+
+model StoredFile {
+  id           String   @id @default(cuid())
+  ownerId      String
+  owner        User     @relation(fields: [ownerId], references: [id])
+  storageKey   String   @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  purpose      String // PROVIDER_DOCUMENT | REQUEST_PHOTO | JOB_DOCUMENTATION
+  requestId    String?
+  request      ServiceRequest? @relation(fields: [requestId], references: [id])
+  createdAt    DateTime @default(now())
+
+  providerDocuments ProviderDocument[]
+
+  @@index([requestId])
+}
+
+model Vehicle {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nickname         String?
+  make             String
+  model            String
+  year             Int
+  vehicleType      String // SEDAN | SUV | PICKUP | VAN | MOTORCYCLE | EV | OTHER
+  drivetrain       String? // FWD | RWD | AWD | 4WD
+  color            String?
+  licensePlate     String?
+  specialHandling  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  requests ServiceRequest[]
+
+  @@index([userId])
+}
+
+model SavedLocation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String
+  line1     String
+  city      String
+  state     String
+  zip       String
+  lat       Float?
+  lng       Float?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model ServiceCategory {
+  id                  String  @id @default(cuid())
+  slug                String  @unique
+  name                String
+  description         String
+  requiresDestination Boolean @default(false)
+  requiredTruckTypes  String  @default("") // comma separated; empty = any equipped provider
+  requiresWinch       Boolean @default(false)
+  active              Boolean @default(true)
+  sortOrder           Int     @default(0)
+
+  pricingRules     PricingRule[]
+  providerServices ProviderService[]
+  requests         ServiceRequest[]
+}
+
+model ServiceArea {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  centerLat   Float?
+  centerLng   Float?
+  radiusMiles Float?
+  zips        String   @default("")
+  active      Boolean  @default(true)
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  pricingRules PricingRule[]
+}
+
+model PricingRule {
+  id                   String           @id @default(cuid())
+  serviceCategoryId    String
+  serviceCategory      ServiceCategory  @relation(fields: [serviceCategoryId], references: [id], onDelete: Cascade)
+  serviceAreaId        String?
+  serviceArea          ServiceArea?     @relation(fields: [serviceAreaId], references: [id])
+  baseFeeCents         Int
+  includedMiles        Float            @default(0)
+  perMileCents         Int              @default(0)
+  serviceFeeCents      Int              @default(0)
+  minimumChargeCents   Int              @default(0)
+  taxRateBps           Int              @default(0) // 825 = 8.25%
+  surcharges           String           @default("[]") // JSON: [{ code, label, amountCents, condition }]
+  quoteValidityMinutes Int              @default(30)
+  active               Boolean          @default(true)
+  isDemo               Boolean          @default(false)
+  updatedById          String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([serviceCategoryId, active])
+}
+
+model ServiceRequest {
+  id                String          @id @default(cuid())
+  number            String          @unique // customer-facing, e.g. CR-7K3M9Q
+  customerId        String
+  customer          User            @relation("CustomerRequests", fields: [customerId], references: [id])
+  serviceCategoryId String
+  serviceCategory   ServiceCategory @relation(fields: [serviceCategoryId], references: [id])
+  vehicleId         String?
+  vehicle           Vehicle?        @relation(fields: [vehicleId], references: [id])
+  status            String          @default("SUBMITTED")
+  isDemo            Boolean         @default(false)
+  // Vehicle snapshot, kept even if the saved vehicle is edited later.
+  vehicleSnapshot   String // JSON
+  situation         String // WONT_START | FLAT_TIRE | ACCIDENT_OR_BREAKDOWN | BATTERY | LOCKED_OUT | OUT_OF_FUEL | OTHER
+  situationNotes    String?
+  isSafeLocation    Boolean
+  vehicleAccessible String? // e.g. "Parking garage, low clearance"
+  // Pickup and destination (private: never exposed to unassigned providers).
+  pickupLine1       String?
+  pickupCity        String?
+  pickupState       String?
+  pickupZip         String?
+  pickupLat         Float?
+  pickupLng         Float?
+  pickupLandmarks   String?
+  pickupSource      String? // DEVICE | MANUAL | SAVED | DEMO_SAMPLE
+  destLine1         String?
+  destCity          String?
+  destState         String?
+  destZip           String?
+  destLat           Float?
+  destLng           Float?
+  // Pricing
+  estimatedMiles    Float?
+  mileageSource     String?
+  // Dispatch rounds: offers go out in rounds; providers offered since searchBase are
+  // not re-offered. A customer retry starts a fresh search by moving searchBase.
+  searchRound       Int             @default(0)
+  searchBase        Int             @default(1)
+  promoCodeId       String?
+  promoCode         PromoCode?      @relation(fields: [promoCodeId], references: [id])
+  finalTotalCents   Int?
+  cancellationFeeCents Int?
+  cancelReason      String?
+  driverEtaMinutes  Int? // provider-entered estimate, never presented as live data
+  driverEtaSetAt    DateTime?
+  completionNotes   String?
+  locationPurgedAt  DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+
+  quotes        Quote[]
+  statusHistory RequestStatusHistory[]
+  assignments   ProviderAssignment[]
+  offers        JobOffer[]
+  payments      Payment[]
+  notifications Notification[]
+  review        Review?
+  messages      Message[]
+  files         StoredFile[]
+  shareLinks    ShareLink[]
+  tickets       SupportTicket[]
+  receipt       Receipt?
+
+  @@index([customerId, createdAt])
+  @@index([status])
+  @@index([pickupZip])
+}
+
+model Quote {
+  id                 String         @id @default(cuid())
+  requestId          String
+  request            ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  kind               String // ESTIMATE | CONFIRMED | REVISION
+  status             String // PENDING_APPROVAL | APPROVED | DECLINED | EXPIRED | SUPERSEDED | NEEDS_CONFIRMATION
+  pricingRuleId      String?
+  breakdown          String // JSON PriceBreakdown
+  totalCents         Int?
+  reason             String?
+  createdById        String?
+  expiresAt          DateTime?
+  approvedAt         DateTime?
+  createdAt          DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model ProviderAssignment {
+  id           String          @id @default(cuid())
+  requestId    String
+  request      ServiceRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  providerId   String
+  provider     ProviderProfile @relation(fields: [providerId], references: [id])
+  method       String // ACCEPTED_OFFER | MANUAL_ADMIN
+  active       Boolean         @default(true)
+  assignedById String?
+  releasedAt   DateTime?
+  releaseReason String?
+  createdAt    DateTime        @default(now())
+
+  @@index([requestId, active])
+  @@index([providerId, active])
+}
+
+model JobOffer {
+  id          String          @id @default(cuid())
+  requestId   String
+  request     ServiceRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  providerId  String
+  provider    ProviderProfile @relation(fields: [providerId], references: [id])
+  status      String          @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED | WITHDRAWN
+  distanceMiles Float?
+  rank        Int
+  round       Int             @default(1)
+  expiresAt   DateTime
+  respondedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@unique([requestId, providerId, round])
+  @@index([providerId, status])
+}
+
+model RequestStatusHistory {
+  id         String         @id @default(cuid())
+  requestId  String
+  request    ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  actorId    String?
+  actor      User?          @relation(fields: [actorId], references: [id])
+  actorRole  String // CUSTOMER | PROVIDER | ADMIN | SYSTEM
+  reason     String?
+  createdAt  DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model Payment {
+  id             String         @id @default(cuid())
+  requestId      String
+  request        ServiceRequest @relation(fields: [requestId], references: [id])
+  processor      String // DEMO | STRIPE
+  processorRef   String?        @unique // e.g. Stripe PaymentIntent id
+  status         String // REQUIRES_PAYMENT_METHOD | AUTHORIZED | SUCCEEDED | FAILED | CANCELED | REFUNDED | PARTIALLY_REFUNDED | DISPUTED | DEMO_NOT_CHARGED
+  amountCents    Int
+  currency       String         @default("usd")
+  capturedCents  Int            @default(0)
+  refundedCents  Int            @default(0)
+  failureReason  String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  refunds Refund[]
+
+  @@index([requestId])
+  @@index([status])
+}
+
+model PaymentEvent {
+  id          String   @id // processor event id; primary key gives idempotency
+  processor   String
+  type        String
+  payload     String
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime @default(now())
+}
+
+model Refund {
+  id            String   @id @default(cuid())
+  paymentId     String
+  payment       Payment  @relation(fields: [paymentId], references: [id])
+  amountCents   Int
+  reason        String
+  status        String // REQUESTED | PENDING | SUCCEEDED | FAILED | DEMO_RECORDED
+  processorRef  String?  @unique
+  requestedById String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model ProviderPayout {
+  id           String          @id @default(cuid())
+  providerId   String
+  provider     ProviderProfile @relation(fields: [providerId], references: [id])
+  requestId    String          @unique
+  grossCents   Int
+  platformFeeCents Int
+  netCents     Int
+  status       String // PENDING | PAID | ON_HOLD | DEMO_NOT_PAID
+  processorRef String?
+  paidAt       DateTime?
+  createdAt    DateTime        @default(now())
+
+  @@index([providerId, status])
+}
+
+model Receipt {
+  id          String         @id @default(cuid())
+  number      String         @unique
+  requestId   String         @unique
+  request     ServiceRequest @relation(fields: [requestId], references: [id])
+  breakdown   String // JSON
+  totalCents  Int
+  isDemo      Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+}
+
+model Notification {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestId     String?
+  request       ServiceRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  type          String
+  channel       String // IN_APP | EMAIL | SMS | PUSH
+  title         String
+  body          String
+  link          String?
+  status        String          @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  attempts      Int             @default(0)
+  lastError     String?
+  nextAttemptAt DateTime?
+  dedupeKey     String          @unique
+  readAt        DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime        @default(now())
+
+  @@index([userId, channel, readAt])
+  @@index([status, nextAttemptAt])
+}
+
+model Message {
+  id        String         @id @default(cuid())
+  requestId String
+  request   ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User           @relation(fields: [senderId], references: [id])
+  body      String
+  createdAt DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model ShareLink {
+  id        String         @id @default(cuid())
+  tokenHash String         @unique
+  requestId String
+  request   ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime       @default(now())
+}
+
+model Review {
+  id        String         @id @default(cuid())
+  requestId String         @unique
+  request   ServiceRequest @relation(fields: [requestId], references: [id])
+  authorId  String
+  author    User           @relation(fields: [authorId], references: [id])
+  rating    Int
+  comment   String?
+  createdAt DateTime       @default(now())
+}
+
+model SupportTicket {
+  id           String          @id @default(cuid())
+  number       String          @unique
+  authorId     String?
+  author       User?           @relation("TicketAuthor", fields: [authorId], references: [id])
+  contactName  String
+  contactEmail String
+  requestId    String?
+  request      ServiceRequest? @relation(fields: [requestId], references: [id])
+  category     String // GENERAL | COMPLAINT | DISPUTE | REFUND | PROVIDER | ACCOUNT
+  subject      String
+  body         String
+  status       String          @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  assigneeId   String?
+  assignee     User?           @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  resolution   String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model PromoCode {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  description      String?
+  percentOff       Int? // whole percent
+  amountOffCents   Int?
+  maxRedemptions   Int?
+  redemptions      Int       @default(0)
+  expiresAt        DateTime?
+  active           Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+
+  requests ServiceRequest[]
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String?
+  details    String   @default("{}")
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// Single-row key/value settings: business contact placeholders, dispatch rules,
+// cancellation policy, platform fee, retention, referral program.
+model Setting {
+  key         String   @id
+  value       String
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}

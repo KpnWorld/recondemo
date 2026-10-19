@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+*.db
+*.db-journal
+storage
+test-results
+e2e
+tests
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+Dockerfile
